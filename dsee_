@@ -48,7 +48,7 @@ my $userpw = ($ENV{'bindpw'} || '');
 my %ops =
     ('statistics_bytes'
      => {
-         'search' => "cn=Bytes,cn=Statistics",
+	 'attr'   => 'bytessent',
          'desc'   => "The number of bytes sent by the LDAP server.",
          'vlabel' => 'Bytes pr ${graph_period}',
          'label'  => 'Bytes',
@@ -56,31 +56,10 @@ my %ops =
          'info'   => "The graph shows the number of bytes sent",
 	 'scope'  => "base"
          },
-     'statistics_pdu'
-     => {
-         'search' => "cn=PDU,cn=Statistics",
-         'desc'   => "The number of PDUs sent by the LDAP server.",
-         'vlabel' => 'PDUs pr ${graph_period}',
-         'label'  => 'PDUs',
-         'title'  => "Number of PDUs sent",
-         'info'   => "The graph shows the number of PDUs sent",
-	 'scope'  => "base"
-         },
-     # Referrals
-     'statistics_referrals' 
-     => {
-         'search' => "cn=Referrals,cn=Statistics",
-         'desc'   => "The number of Referrals sent by the LDAP server.",
-         'vlabel' => 'Referrals pr ${graph_period}',
-         'label'  => 'Referrals',
-         'title'  => "Number of LDAP Referrals",
-         'info'   => "The graph shows the number of referrals sent",
-	 'scope'  => "base"
-         },
      # Entries
      'statistics_entries'
      => {
-         'search' => "cn=Entries,cn=Statistics",
+	 'attr'   => 'entriessent',
          'desc'   => "The number of Entries sent by the LDAP server.",
          'vlabel' => 'Entries pr ${graph_period}',
          'label'  => 'Entries',
@@ -88,10 +67,23 @@ my %ops =
          'info'   => "The graph shows the number of entries sent",
 	 'scope'  => "base"
          },
+     # Entries
+     'statistics_binds_anon'
+     => {
+	 'search' => 'cn=snmp',
+	 'attr'   => 'anonymousbinds',
+         'desc'   => "The number of Anonymous BIND operations.",
+         'vlabel' => 'Entries pr ${graph_period}',
+         'label'  => 'Entries',
+         'title'  => "Number of Anonymous BINDs",
+         'info'   => "The graph shows the number of anonymous binds",
+	 'scope'  => "base"
+         },
      # Only read Total
      'connections' 
      => {
-         'search' => 'cn=Total,cn=Connections',
+         # 'search' => '',
+	 'attr'   => 'totalconnections',
          'desc'   => 'The number of connections',
          'label'  => 'Connections',
          'vlabel' => 'Connections pr ${graph_period}',
@@ -101,35 +93,26 @@ my %ops =
          },
      # dn: cn=Write,cn=Waiters,cn=Monitor
      # dn: cn=Read,cn=Waiters,cn=Monitor
-     'waiters' 
+     'statistics_waiters' 
      => {
-         'search' => 'cn=Waiters',
-         'filter' => '(|(cn=Write)(cn=Read))',
+         'attr'   => 'readwaiters',
          'desc'   => "The current number of Waiters",
-         'label2' => {'write' => 'Write',
-                      'read'  => 'Read'},
+ 	 'label'  => 'Waiters',
          'vlabel' => "Waiters",
          'title'  => "Number of Waiters",
-         'info'   => "The graph shows the number of Waiters"
+         'info'   => "The graph shows the number of Waiters",
+	 'scope'  => 'base',
          },
-     'operations'
+     'statistics_ops'
      => {
-         'search' => "cn=Operations",
+	 'attr'   => 'opscompleted',
          'desc'   => "Operations",
          'vlabel' => 'Operations pr ${graph_period}',
          'label'  => 'Operations',
          'title'  => "Operations",
-         'info'   => "Number of completed LDAP operations"
+         'info'   => "Number of completed LDAP operations",
+	 'scope'  => 'base',
          },
-     'operations_diff'
-     => {
-         'search' => "cn=Operations",
-         'desc'   => "Operations deviance",
-         'vlabel' => 'Deviance',
-         'label'  => 'Deviance',
-         'title'  => "Operations deviance",
-         'info'   => "Deviance between Initiated and Completed ops"
-       }
      );
 
 # Config subroutine
@@ -163,7 +146,7 @@ EOF
         if ($mesg->code) {
           die "Failed to bind: " . $mesg->error;
         }
-        my $searchdn = $ops{$action}->{'search'} . "," . $basedn;
+        my $searchdn = ($ops{$action}->{'search'} ? $ops{$action}->{'search'} . "," : '') . $basedn;
         $mesg =
             $ldap->search (
                            base   => $searchdn,
@@ -201,7 +184,7 @@ EOF
 }
 
 # Determine action based on filename first
-(my $action = $0) =~ s/^.*slapd_([\w\d_]+)$/$1/;
+(my $action = $0) =~ s/^.*dsee_([\w\d_]+)$/$1/;
 
 if ($ARGV[0]) {
     if ($ARGV[0] eq 'autoconf') {
@@ -235,6 +218,7 @@ if ($ARGV[0]) {
                            filter => '(objectClass=monitorServer)',
                            attrs  => [
                                        'cn',
+					$ops{$action}->{'attr'},
                                      ],
                            );
         if ($mesg->code) {
@@ -278,12 +262,14 @@ if ($mesg->code) {
   die "Failed to bind: " . $mesg->error;
 }
 
-my $searchdn = $ops{$action}->{'search'} . "," . $basedn;
+my $searchdn = ($ops{$action}->{'search'} ? $ops{$action}->{'search'} . "," : '') . $basedn;
 my $searchattrs;
 
 if ($action =~ /^operations(_diff)?$/) {
     # We look for different parameters in Operations branch
     $searchattrs = ['monitorOpInitiated', 'monitorOpCompleted', 'cn'];
+} elsif ($ops{$action}->{'attr'}) {
+    $searchattrs = [ $ops{$action}->{'attr'}, 'cn' ];
 } else {
     $searchattrs = ['monitorCounter', 'cn'];
 }
@@ -335,7 +321,7 @@ for (my $i = 0 ; $i < $max ; $i++) {
 	} else {
 	    print lc ("${action}_${cn}.value ");
 	}
-	print $entry->get_value('monitorCounter'), "\n";
+	print $entry->get_value( $ops{$action}->{'attr'} || 'monitorCounter' ), "\n";
     }
 }
 $ldap->unbind;
